@@ -77,12 +77,28 @@ function withPageKeys(request, env) {
 // Lỗi kèm mã HTTP, để biết vì sao một key không dùng được
 class KeyError extends Error { constructor(msg, status) { super(msg); this.status = status; } }
 function keyReason(service, status, body) {
-  const b = String(body || "").toLowerCase();
+  const raw = String(body || "");
+  const b = raw.toLowerCase();
+  // ElevenLabs trả lỗi dạng {"detail":{"status":"…","message":"…"}}: đọc đúng mã để báo đúng nguyên nhân
+  let code = "", msg = "";
+  try { const d = JSON.parse(raw).detail || {}; code = String(d.status || d.code || "").toLowerCase(); msg = String(d.message || ""); } catch (_) {}
+  if (service === "elevenlabs") {
+    if (code.includes("unusual_activity") || b.includes("unusual activity"))
+      return "ElevenLabs đã khoá gói miễn phí của tài khoản này vì phát hiện \u201choạt động bất thường\u201d (nhiều tài khoản miễn phí, hoặc gọi qua máy chủ/VPN)";
+    if (code.includes("payment_required") || code.includes("paid_plan") || b.includes("library voices") || b.includes("free users cannot"))
+      return "gói miễn phí không được dùng giọng lấy từ Voice Library qua API; hãy chọn giọng mặc định (premade) hoặc nâng cấp gói";
+    if (code.includes("quota_exceeded") || b.includes("exceeds your quota") || b.includes("credits remaining"))
+      return "hết ký tự của tháng" + (msg ? " (" + msg.slice(0, 120) + ")" : "");
+    if (code.includes("voice_not_found") || b.includes("voice_not_found")) return "tài khoản này không có giọng đã chọn";
+    if (code.includes("invalid_api_key") || code.includes("unauthorized")) return "sai key";
+    if (code.includes("missing_permissions")) return "key thiếu quyền (bật quyền Text to Speech và Voices khi tạo key)";
+    if (status === 429) return "gọi quá nhiều cùng lúc, thử lại sau";
+    return `lỗi ${status}` + (msg ? ": " + msg.slice(0, 140) : (raw ? ": " + raw.slice(0, 140) : ""));
+  }
   if (b.includes("quota") || status === 402) return "hết hạn mức";
   if (status === 429) return "quá giới hạn (hết hạn mức hoặc gọi quá nhanh)";
-  if (status === 401) return service === "elevenlabs" ? "sai key, hết ký tự hoặc thiếu quyền" : "sai key hoặc sai vùng";
+  if (status === 401) return "sai key hoặc sai vùng";
   if (status === 403) return "hết hạn mức hoặc key bị khoá";
-  if (b.includes("voice_not_found")) return "tài khoản này không có giọng đã chọn";
   return `lỗi ${status}`;
 }
 
@@ -328,6 +344,7 @@ async function elevenVoices(env) {
         id: v.voice_id, name: v.name,
         gender: (v.labels && v.labels.gender) || "",
         lang: (v.labels && (v.labels.language || v.labels.accent)) || "",
+        category: v.category || "",
         keys: []
       });
       map.get(v.voice_id).keys.push(res.value.i + 1);
