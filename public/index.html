@@ -1526,6 +1526,7 @@ function normalizeKeys(k){
   if(k.trKey&&!k.tr.some(x=>x.key===k.trKey))k.tr.unshift({key:k.trKey,region:k.trRegion||""});
   ["azureKey","azureRegion","elevenKey","trKey","trRegion"].forEach(x=>delete k[x]);
   k.start=Object.assign({},k.start||{});
+  k.updatedAt=+k.updatedAt||0;
   return k;
 }
 const KLISTS={azure:{el:"#kAzList",field:"azure",region:true},elevenlabs:{el:"#kElList",field:"eleven",region:false},translator:{el:"#kTrList",field:"tr",region:true}};
@@ -1593,17 +1594,24 @@ $("#kTest").onclick=async e=>{
   }catch(err){const p=document.querySelector('#keysForm .status[data-s="edge"]');p.textContent=err.message;p.className="status bad"}
   KEYS=old;btn.disabled=false;btn.textContent="Kiểm tra kết nối";
 };
-async function syncKeysUp(){
-  if(!(store.get("syncKeys",true)&&CFG.supabase&&!DEMO))return;
-  await apiJson("/api/settings",{method:"PUT",body:{keys:{azure:KEYS.azure||[],eleven:KEYS.eleven||[],tr:KEYS.tr||[]}}});
+// Đồng bộ danh sách key lên Supabase. Bản nào sửa sau cùng (updatedAt lớn hơn) là bản đúng,
+// nên key đã xoá trên máy này sẽ không bị Supabase "trả lại".
+async function syncKeysUp(force){
+  if(DEMO||!store.get("syncKeys",true))return;
+  if(!force&&!CFG.supabase)return;
+  if(!(KEYS.sbUrl&&KEYS.sbKey)&&!CFG.supabase)return;
+  await apiJson("/api/settings",{method:"PUT",body:{keys:{azure:KEYS.azure||[],eleven:KEYS.eleven||[],tr:KEYS.tr||[],updatedAt:KEYS.updatedAt||Date.now()}}});
 }
 $("#keysForm").onsubmit=async e=>{
   e.preventDefault();
-  KEYS=normalizeKeys(readKeyForm());store.set("keys",KEYS);
+  KEYS=normalizeKeys(readKeyForm());KEYS.updatedAt=Date.now();store.set("keys",KEYS);
   store.set("syncKeys",$("#kSync").checked);
   dlg.close();
+  // Đẩy bản mới lên Supabase TRƯỚC khi tải lại, để không bị bản cũ trên Supabase ghi đè
+  let syncErr=null;
+  if(KEYS.sbUrl&&KEYS.sbKey){try{await syncKeysUp(true)}catch(err){syncErr=err}}
   await refreshConnections();
-  try{await syncKeysUp()}catch(err){toast("Chưa đồng bộ được key lên Supabase: "+err.message,6000);return}
+  if(syncErr){toast("Chưa đồng bộ được key lên Supabase: "+syncErr.message,6000);return}
   const parts=[];
   if(CFG.supabase)parts.push("Supabase");
   if(CFG.azure)parts.push("Azure ("+KEYS.azure.length+" key)");
@@ -1640,11 +1648,18 @@ async function refreshConnections(){
       try{
         const s=await apiJson("/api/settings");
         if(s&&s.voice){DEF=Object.assign(clone(BUILTIN_VOICE),s.voice);store.set("defaultVoice",DEF)}
-        // Máy mới: lấy các key Azure/ElevenLabs/Translator đã đồng bộ trên Supabase (thêm key còn thiếu, không xoá key đang có)
+        // Đồng bộ key với Supabase: bản nào sửa sau cùng thì dùng bản đó (kể cả khi bạn đã xoá bớt key)
         if(s&&s.keys){
-          const remote=normalizeKeys(s.keys);let changed=false;
-          for(const f of ["azure","eleven","tr"])for(const x of remote[f])if(!KEYS[f].some(y=>y.key===x.key)){KEYS[f].push(x);changed=true}
-          if(changed){store.set("keys",KEYS);CFG=await apiJson("/api/config")}
+          const remote=normalizeKeys(s.keys);
+          const rt=remote.updatedAt||0,lt=KEYS.updatedAt||0;
+          const localEmpty=!KEYS.azure.length&&!KEYS.eleven.length&&!KEYS.tr.length;
+          if(rt>lt||(localEmpty&&!lt)){
+            const same=["azure","eleven","tr"].every(f=>JSON.stringify(KEYS[f])===JSON.stringify(remote[f]));
+            KEYS.azure=remote.azure;KEYS.eleven=remote.eleven;KEYS.tr=remote.tr;KEYS.updatedAt=rt;
+            ["azure","elevenlabs","translator"].forEach((k,i)=>{const n=KEYS[["azure","eleven","tr"][i]].length;if((KEYS.start[k]||0)>=n)KEYS.start[k]=0});
+            store.set("keys",KEYS);
+            if(!same)CFG=await apiJson("/api/config");
+          }else if(lt>rt){syncKeysUp().catch(()=>{})}
         }
       }catch(e){}
     }
