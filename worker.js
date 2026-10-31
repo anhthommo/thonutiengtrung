@@ -30,6 +30,8 @@ export default {
       if (url.pathname === "/api/config") return json(config(env));
       if (url.pathname === "/api/tts") return await tts(url, env, ctx);
       if (url.pathname === "/api/voices/elevenlabs") return await elevenVoices(env);
+      if (url.pathname === "/api/elevenlabs/library") return await elevenLibrary(url, env);
+      if (url.pathname === "/api/elevenlabs/add") return await elevenAdd(request, env);
       if (url.pathname.startsWith("/api/sentences")) return await sentences(request, url, env);
       if (url.pathname === "/api/settings") return await settings(request, env);
       if (url.pathname === "/api/check") return json(await check(env));
@@ -112,6 +114,7 @@ async function check(env) {
     (async () => {
       out.supabase = await safe(async () => {
         if (!env.SUPABASE_URL || !env.SUPABASE_KEY) return { ok: null, msg: "Chưa nhập" };
+        if (sbKeyKind(env.SUPABASE_KEY) === "public") return { ok: false, msg: SB_WRONG_KEY };
         const r = await fetch(`${env.SUPABASE_URL}/rest/v1/sentences?select=id&limit=1`, { headers: sbHeaders(env) });
         if (r.status === 401 || r.status === 403) return { ok: false, msg: "Sai khoá Supabase" };
         if (r.status === 404 || r.status === 400) return { ok: false, msg: "Chưa có bảng sentences. Hãy chạy file supabase.sql trong SQL Editor." };
@@ -334,6 +337,55 @@ async function elevenVoices(env) {
   return json({ voices: [...map.values()], total: env.ELEVEN_KEYS.length, errors });
 }
 
+// Tìm giọng tiếng Trung trong Voice Library của ElevenLabs
+async function elevenLibrary(url, env) {
+  if (!env.ELEVEN_KEYS.length) return fail("Chưa nhập key ElevenLabs", 400);
+  const q = new URLSearchParams({ page_size: "30", language: "zh", sort: "trending" });
+  const g = url.searchParams.get("gender"); if (g === "male" || g === "female") q.set("gender", g);
+  const search = (url.searchParams.get("q") || "").trim(); if (search) q.set("search", search);
+  q.set("page", String(Math.max(0, parseInt(url.searchParams.get("page") || "0", 10) || 0)));
+  const used = await rotate("ElevenLabs", env.ELEVEN_KEYS, env.KEY_START.elevenlabs, async k => {
+    const r = await fetch("https://api.elevenlabs.io/v1/shared-voices?" + q, { headers: { "xi-api-key": k.key } });
+    if (!r.ok) throw new KeyError(keyReason("elevenlabs", r.status, await r.text()), r.status);
+    return r.json();
+  });
+  const d = used.value;
+  return json({
+    has_more: !!d.has_more,
+    voices: (d.voices || []).map(v => ({
+      voice_id: v.voice_id, owner: v.public_owner_id, name: v.name,
+      gender: v.gender || "", age: v.age || "", accent: v.accent || "", locale: v.locale || "",
+      description: (v.description || "").slice(0, 200), use_case: v.use_case || "",
+      preview: v.preview_url || "", uses: v.cloned_by_count || v.usage_character_count_1y || 0
+    }))
+  });
+}
+
+// Thêm một giọng từ Voice Library vào My Voices của mọi tài khoản (mọi key), để tự chuyển key vẫn giữ được giọng
+async function elevenAdd(request, env) {
+  if (!env.ELEVEN_KEYS.length) return fail("Chưa nhập key ElevenLabs", 400);
+  const b = await request.json();
+  if (!b.owner || !b.voice_id) return fail("Thiếu thông tin giọng", 400);
+  const name = String(b.name || "Giọng tiếng Trung").slice(0, 60);
+  const results = await Promise.all(env.ELEVEN_KEYS.map(async (k, i) => {
+    try {
+      const r = await fetch(`https://api.elevenlabs.io/v1/voices/add/${encodeURIComponent(b.owner)}/${encodeURIComponent(b.voice_id)}`, {
+        method: "POST",
+        headers: { "xi-api-key": k.key, "content-type": "application/json" },
+        body: JSON.stringify({ new_name: name })
+      });
+      const txt = await r.text();
+      if (!r.ok) {
+        const already = txt.includes("already") ;
+        return { key: i + 1, ok: already, voice_id: already ? b.voice_id : "", msg: already ? "đã có sẵn" : (txt.includes("voice_limit") || txt.includes("limit") ? "tài khoản đã đầy chỗ chứa giọng" : keyReason("elevenlabs", r.status, txt)) };
+      }
+      let id = b.voice_id; try { id = JSON.parse(txt).voice_id || id; } catch (_) {}
+      return { key: i + 1, ok: true, voice_id: id, msg: "đã thêm" };
+    } catch (e) { return { key: i + 1, ok: false, msg: "không kết nối được" }; }
+  }));
+  return json({ results });
+}
+
 /* ---------------- Dịch sang tiếng Việt ---------------- */
 // Có key Azure Translator thì dùng Azure (chính thức, 2 triệu ký tự/tháng miễn phí);
 // không có thì dùng Google Translate miễn phí (không chính thức).
@@ -383,7 +435,24 @@ async function translate(request, env) {
 }
 
 /* ---------------- Supabase ---------------- */
-const sbHeaders = env => ({ apikey: env.SUPABASE_KEY, Authorization: `Bearer ${env.SUPABASE_KEY}` });
+// Khoá kiểu mới (sb_secret_…) chỉ gửi qua header apikey; khoá kiểu cũ (JWT service_role) gửi cả Authorization
+const sbHeaders = env => String(env.SUPABASE_KEY).startsWith("sb_")
+  ? { apikey: env.SUPABASE_KEY }
+  : { apikey: env.SUPABASE_KEY, Authorization: `Bearer ${env.SUPABASE_KEY}` };
+
+// Nhận biết khoá công khai (anon / publishable): khoá này bị chặn bởi row-level security
+function sbKeyKind(key) {
+  key = String(key || "");
+  if (key.startsWith("sb_secret_")) return "secret";
+  if (key.startsWith("sb_publishable_")) return "public";
+  try {
+    const p = JSON.parse(atob(key.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (p.role === "service_role") return "secret";
+    if (p.role === "anon") return "public";
+  } catch (_) {}
+  return "unknown";
+}
+const SB_WRONG_KEY = "Bạn đang dùng khoá công khai (anon / publishable) nên Supabase chặn ghi dữ liệu. Hãy dùng khoá bí mật: Project Settings > API Keys > Secret keys (sb_secret_…), hoặc khoá service_role ở mục Legacy API keys.";
 
 async function sb(env, path, init = {}) {
   const r = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
@@ -391,7 +460,10 @@ async function sb(env, path, init = {}) {
     headers: { ...sbHeaders(env), "content-type": "application/json", Prefer: "return=representation", ...(init.headers || {}) }
   });
   const txt = await r.text();
-  if (!r.ok) throw new Error(`Supabase lỗi ${r.status}: ${txt.slice(0, 200)}`);
+  if (!r.ok) {
+    if (txt.includes("row-level security") || txt.includes("42501")) throw new Error(SB_WRONG_KEY);
+    throw new Error(`Supabase lỗi ${r.status}: ${txt.slice(0, 200)}`);
+  }
   return txt ? JSON.parse(txt) : null;
 }
 
