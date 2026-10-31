@@ -500,7 +500,7 @@ html:has(dialog[open]){overflow:hidden}
 <dialog id="elDlg" aria-labelledby="elTitle">
   <div class="lk">
     <div class="wd-top"><h2 id="elTitle" style="margin:0;font-size:1.05rem;flex:1">Giọng tiếng Trung trên ElevenLabs</h2><button type="button" class="x" id="elClose" aria-label="Đóng">×</button></div>
-    <p class="mini-note">Danh sách lấy từ Voice Library của ElevenLabs (lọc tiếng Trung). Bấm ▶ để nghe thử. “Thêm và dùng” sẽ thêm giọng vào My Voices của mọi tài khoản bạn đã nhập key, rồi chọn luôn giọng đó.</p>
+    <p class="mini-note">Danh sách lấy từ Voice Library của ElevenLabs (lọc tiếng Trung). Bấm ▶ để nghe thử. “Thêm và dùng” sẽ thêm giọng vào My Voices của mọi tài khoản bạn đã nhập key, rồi chọn luôn giọng đó. Lưu ý: tài khoản <b>miễn phí</b> không đọc được bằng giọng lấy từ thư viện này qua API; hãy dùng các giọng có dấu ★ (giọng mặc định) hoặc nâng cấp gói.</p>
     <div class="row" style="gap:8px">
       <span class="seg small" id="elGender"><button type="button" data-g="female">Nữ</button><button type="button" data-g="male">Nam</button><button type="button" data-g="">Tất cả</button></span>
       <input id="elQ" placeholder="Tìm theo tên, ví dụ: news, calm…" autocomplete="off" style="flex:1;min-width:150px;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:6px 10px;color:var(--ink)">
@@ -834,9 +834,11 @@ async function loadElevenVoices(){
     if(d.errors&&d.errors.length)toast("ElevenLabs: "+d.errors.join("; "),7000);
     const f=[],m=[];
     d.voices.forEach(v=>{
-      const name=v.name+(v.lang?" ("+v.lang+")":"")+(d.total>1&&v.keys&&v.keys.length<d.total?" [chỉ có ở key "+v.keys.join(", ")+"]":"");
+      const name=(v.category==="premade"?"★ ":"")+v.name+(v.lang?" ("+v.lang+")":"")+(v.category==="premade"?" [mặc định, dùng được với gói miễn phí]":"")+(d.total>1&&v.keys&&v.keys.length<d.total?" [chỉ có ở key "+v.keys.join(", ")+"]":"");
       if(v.gender==="male")m.push([v.id,name]);else if(v.gender==="female")f.push([v.id,name]);else{f.push([v.id,name]);m.push([v.id,name])}
     });
+    const byStar=(a,b)=>(b[1].startsWith("★")?1:0)-(a[1].startsWith("★")?1:0);
+    f.sort(byStar);m.sort(byStar);
     VOICES.elevenlabs={female:f,male:m};
   }catch(e){toast("Không tải được danh sách giọng ElevenLabs: "+e.message,6000)}
   mergeManualVoices();
