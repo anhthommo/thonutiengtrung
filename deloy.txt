@@ -1,0 +1,18 @@
+Lỗi này có hai nguyên nhân, và cả hai đã được xử lý trong hoc-tieng-trung.zip mới.
+
+Quá nhiều file: bản trước có khoảng 14.400 file, vượt giới hạn 1.000 file của kiểu tải lên bằng kéo-thả. Mình đã gói từ điển lại còn 64 file. Phông chữ và dữ liệu nét chữ giờ tải từ jsDelivr khi cần, rồi được lưu lại trên máy để dùng khi mất mạng. Cả project giờ chỉ còn 79 file, khoảng 4,7 MB.
+Sai chỗ tải lên: bạn đang tải lên Cloudflare Pages. Pages chỉ chứa trang tĩnh, nên dù tải lên được thì phần máy chủ (giọng Edge/Azure/ElevenLabs, dịch, lưu câu vào Supabase) cũng không chạy. Project này phải deploy dưới dạng Worker.
+
+Cách deploy không cần cài gì lên máy (qua GitHub)
+
+Tạo repository: vào github.com, tạo tài khoản nếu chưa có, bấm New repository, đặt tên hoc-tieng-trung (chọn Private cũng được) rồi bấm Create.
+Tải code lên: trong repository mới, bấm dòng chữ uploading an existing file. Giải nén file zip, mở thư mục hoc-tieng-trung, chọn toàn bộ nội dung bên trong (thư mục public, src và các file wrangler.toml, package.json…). Kéo thả vào trang GitHub, chờ tải xong rồi bấm Commit changes.
+Kết nối Cloudflare: vào Cloudflare, chọn Workers & Pages > Create > tab Workers (không phải Pages) > Import a repository. Kết nối tài khoản GitHub và chọn repository hoc-tieng-trung.
+Cấu hình: ô Project name phải là hoc-tieng-trung (trùng với tên trong wrangler.toml). Để trống Build command, giữ Deploy command mặc định là npx wrangler deploy, rồi bấm Deploy.
+Lấy địa chỉ: sau 1–2 phút, Cloudflare cho địa chỉ dạng https://hoc-tieng-trung.<tên-bạn>.workers.dev. Mở địa chỉ đó, bấm ⚙︎ để nhập key, rồi cài lên iPhone như hướng dẫn trước.
+
+Sau này muốn cập nhật, chỉ cần tải file mới lên GitHub đè file cũ, Cloudflare sẽ tự deploy lại.
+
+Nếu bạn quen dùng dòng lệnh thì vẫn có thể cài Node.js rồi chạy npm install, npx wrangler login, npx wrangler deploy trong thư mục project. README có ghi cả hai cách.
+
+Nếu bước nào báo lỗi, chụp màn hình gửi mình, nhất là phần nhật ký deploy (Build log) trên Cloudflare.

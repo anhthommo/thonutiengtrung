@@ -1,0 +1,20 @@
+name = "hoc-tieng-trung"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# Không cần điền gì ở đây: key được nhập ngay trên trang (nút "Kết nối và API key").
+# Chỉ dùng phần dưới nếu muốn đặt sẵn key trên máy chủ, hoặc đặt mật khẩu cho trang.
+[vars]
+APP_PASSWORD = ""   # tuỳ chọn: đặt mật khẩu để người lạ không dùng ké
+# Có thể đặt sẵn nhiều key, cách nhau bằng dấu phẩy: AZURE_KEY = "key1,key2"
+# AZURE_KEY = ""
+# AZURE_REGION = "southeastasia"
+# ELEVENLABS_KEY = ""
+# SUPABASE_URL = ""
+# SUPABASE_KEY = ""
+# TRANSLATOR_KEY = ""
+# TRANSLATOR_REGION = "southeastasia"
